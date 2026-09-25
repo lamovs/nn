@@ -37,6 +37,13 @@ func realPNG(t *testing.T) []byte {
 // Exercises the real private command and engine adapter; only the model is fake.
 func TestBackgroundRealWorkerOnce(t *testing.T) {
 	dir := t.TempDir()
+	// Build before HOME moves: a module cache under the temp HOME is read-only
+	// and breaks TempDir cleanup.
+	binary := filepath.Join(dir, "nn")
+	build := exec.Command("go", "build", "-o", binary, "../../cmd/nn")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
 	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(home, 0700); err != nil {
 		t.Fatal(err)
@@ -52,11 +59,6 @@ func TestBackgroundRealWorkerOnce(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.toml")
 	t.Setenv("NN_CONFIG", cfgPath)
 	t.Setenv("NN_AI", "")
-	binary := filepath.Join(dir, "nn")
-	build := exec.Command("go", "build", "-o", binary, "../../cmd/nn")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
 	engine := filepath.Join(dir, "fake-engine")
 	marker := filepath.Join(dir, "sent-image")
 	t.Setenv("SHOT_IMAGE_MARKER", marker)
