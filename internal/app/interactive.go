@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/lamovs/nn/internal/cli"
 	"github.com/lamovs/nn/internal/platform"
@@ -22,8 +23,58 @@ func Interactive() bool {
 }
 
 var openTTY = func() (io.ReadWriteCloser, error) {
+	return openTTYFile("/dev/tty")
+}
+
+// eagainRetryPause is how long ttyFile waits before retrying a read or
+// write that returned EAGAIN.
+const eagainRetryPause = 20 * time.Millisecond
+
+// ttyFile wraps a nonblocking *os.File and retries on EAGAIN. On macOS
+// /dev/tty is not pollable, so the runtime cannot park the goroutine on it
+// and a nonblocking read returns EAGAIN immediately instead of waiting.
+type ttyFile struct {
+	f *os.File
+}
+
+func (t *ttyFile) Read(p []byte) (int, error) {
+	for {
+		n, err := t.f.Read(p)
+		if n == 0 && errors.Is(err, syscall.EAGAIN) {
+			time.Sleep(eagainRetryPause)
+			continue
+		}
+		return n, err
+	}
+}
+
+func (t *ttyFile) Write(p []byte) (int, error) {
+	written := 0
+	for written < len(p) {
+		n, err := t.f.Write(p[written:])
+		written += n
+		if err != nil {
+			if errors.Is(err, syscall.EAGAIN) {
+				time.Sleep(eagainRetryPause)
+				continue
+			}
+			return written, err
+		}
+	}
+	return written, nil
+}
+
+func (t *ttyFile) Close() error {
+	return t.f.Close()
+}
+
+func openTTYFile(path string) (io.ReadWriteCloser, error) {
 	// Nonblocking so Close interrupts a pending read on cancellation.
-	return os.OpenFile("/dev/tty", os.O_RDWR|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &ttyFile{f: f}, nil
 }
 
 func readTTYLine(tty io.ReadWriter, prompt string) (string, error) {
