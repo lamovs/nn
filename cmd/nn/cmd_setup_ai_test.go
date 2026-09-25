@@ -34,7 +34,7 @@ func assertNoConfig(t *testing.T) {
 const sendsLines = "  nn sends it:\n" +
 	shotLine +
 	"    title: new note text or OCR, an optional source image and existing vault tag names\n" +
-	"    ask: your question and excerpts of the notes nn finds for it\n" +
+	"    ask: your question and the paths, titles, tags and excerpts of the notes nn finds for it\n" +
 	"    filter: your instruction and the text piped to nn ai\n" +
 	"    last: the previous command you provide and its optional output\n" +
 	"    triage: excerpts and metadata of selected inbox notes and related notes\n" +

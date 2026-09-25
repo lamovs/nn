@@ -32,6 +32,8 @@ func adversarial() []ai.AskParagraph {
 		para("key:: v\n- [ ] x a:::b x::::y", "S1"),
 		para("%% hidden 100%% \\[x\\] &lt; ==x==", "S1", "S2", "S3"),
 		para("\x1b]8;;http://e\x07osc"+rightToLeft+"rtl"+lineSeparator+"sep", "S2"),
+		para("~~~ x", "S1"),
+		para("$$ y", "S3"),
 	}
 }
 
@@ -46,6 +48,8 @@ func TestRenderGolden(t *testing.T) {
 		"- key:: v - \\[ \\] x a:::b x::::y [1]\n" +
 		"- %% hidden 100%% \\\\\\[x\\\\\\] &amp;lt; ==x== [1] [2] [3]\n" +
 		"- \\]8;;http\\://eoscrtl sep [2]\n" +
+		"- ~~~ x [1]\n" +
+		"- $$ y [3]\n" +
 		"\n" +
 		"Sources:\n" +
 		"[1] [PGO \\*in\\* Go](" + uri("nn/a.md") + ") (nn/a.md, 2026-09-17)\n" +

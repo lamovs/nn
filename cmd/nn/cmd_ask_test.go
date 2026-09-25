@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -199,7 +200,7 @@ func TestAskConsentOnceCoversFollowup(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, "docker builder prune") || f.read(t, "calls") != "2\n" || len(asker.questions) != 1 {
 		t.Fatalf("code=%d stdout=%q stderr=%q questions=%v", code, stdout, stderr, asker.questions)
 	}
-	if !strings.Contains(asker.questions[0], "additional local searches") || !strings.Contains(asker.questions[0], "12000 characters") {
+	if !strings.Contains(asker.questions[0], "additional local searches") || !strings.Contains(asker.questions[0], "12000 characters") || !strings.Contains(asker.questions[0], "the question and the paths, titles, tags and excerpts of up to ") {
 		t.Fatalf("consent omits followups or budget: %q", asker.questions[0])
 	}
 	configAfter, _ := os.ReadFile(os.Getenv("NN_CONFIG"))
@@ -274,6 +275,8 @@ func TestAskInvalidFlagsAndMissingQuestion(t *testing.T) {
 		{"ask", "Docker", "--no-ai"}, {"ask", "Docker", "--effort", "ultra"},
 		{"ask", "Docker", "--model"}, {"ask", "Docker", "--ai="},
 		{"ask", "Docker", "--model="}, {"ask", "Docker", "--ai=missing"},
+		{"ask", "Docker", "--save=yes"}, {"ask", "--save", "Docker"},
+		{"ask", "Docker", "--ai", "codex"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			f := newAskFixture(t)
@@ -302,7 +305,7 @@ func TestAskCancellation(t *testing.T) {
 func TestAskHelpAndIndex(t *testing.T) {
 	newTestVault(t)
 	stdout, stderr, code := runCmd(t, "", "ask", "--help")
-	if code != 0 || !strings.Contains(stdout, "nn ask") || !strings.Contains(stdout, "--effort") || !strings.Contains(stdout, "search_rounds") {
+	if code != 0 || !strings.Contains(stdout, "nn ask") || !strings.Contains(stdout, "--effort") || !strings.Contains(stdout, "search_rounds") || !strings.Contains(stdout, "--save") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	stdout, _, _ = runCmd(t, "")
@@ -318,5 +321,307 @@ func TestAskTimeoutLeavesStdoutEmpty(t *testing.T) {
 	stdout, stderr, code := runCmd(t, "", "ask", "Docker cache")
 	if code != 2 || stdout != "" || stderr == "" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
+// withAskSaveHook switches the fixture's post_save hook from a tripwire to a
+// counter that appends one line to NN_ASK_FAKE/hooks per run.
+func withAskSaveHook(cfg string) string {
+	return strings.Replace(cfg, `post_save="touch MUST_NOT_RUN"`, `post_save="printf 'hook\\n' >> \"$NN_ASK_FAKE/hooks\""`, 1)
+}
+
+func assertNoAskSave(t *testing.T, f askFixture) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(f.root, "nn")); !os.IsNotExist(err) {
+		t.Error("nn dir created")
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "hooks")); !os.IsNotExist(err) {
+		t.Error("hook ran")
+	}
+}
+
+func TestAskSaveCreatesNote(t *testing.T) {
+	f := newAskFixture(t)
+	baseline, _, code := runCmd(t, "", "ask", "How did I clear Docker cache?")
+	if code != 0 {
+		t.Fatalf("baseline run: code=%d", code)
+	}
+	if err := os.Remove(filepath.Join(f.dir, "calls")); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, withAskSaveHook(f.cfg))
+	stdout, stderr, code := runCmd(t, "", "ask", "How did I clear Docker cache?", "--save")
+	if code != 0 || stdout != baseline {
+		t.Fatalf("code=%d stdout=%q baseline=%q stderr=%q", code, stdout, baseline, stderr)
+	}
+	if f.read(t, "calls") != "1\n" {
+		t.Fatal("expected exactly one model call")
+	}
+	savedPath := strings.TrimSuffix(stderr, "\n")
+	if savedPath != "nn/how-did-i-clear-docker-cache.md" || strings.Contains(savedPath, "\n") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(f.root, "nn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "how-did-i-clear-docker-cache.md" {
+		t.Fatalf("nn dir entries = %v", entries)
+	}
+	if got := f.read(t, "hooks"); got != "hook\n" {
+		t.Fatalf("hooks = %q, want exactly one run", got)
+	}
+	data, err := os.ReadFile(filepath.Join(f.root, filepath.FromSlash(savedPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	frontmatter := regexp.MustCompile(`^---\ndate: \d{4}-\d{2}-\d{2}\ntags: \[\]\naliases: \[How did I clear Docker cache\?\]\ntime: "\d{2}:\d{2}"\nvia: ask\n---\n`)
+	loc := frontmatter.FindStringIndex(body)
+	if loc == nil {
+		t.Fatalf("frontmatter mismatch: %q", body)
+	}
+	wantRest := "Use docker builder prune. [1]\n\n## Sources\n\n1. [[../notes/docker.md]] Docker cache\n"
+	if rest := body[loc[1]:]; rest != wantRest {
+		t.Fatalf("body\n got:\n%s\nwant:\n%s", rest, wantRest)
+	}
+}
+
+func TestAskSaveExcludedFromLaterAsk(t *testing.T) {
+	f := newAskFixture(t)
+	writeConfig(t, withAskSaveHook(f.cfg))
+	_, stderr, code := runCmd(t, "", "ask", "How did I clear Docker cache?", "--save")
+	if code != 0 {
+		t.Fatalf("save run: code=%d stderr=%q", code, stderr)
+	}
+	savedPath := strings.TrimSuffix(stderr, "\n")
+	writeNote(t, f.root, "nn/old-digest.md", "---\nvia: digest\n---\nDocker cache digest.\n")
+	if err := os.Remove(filepath.Join(f.dir, "calls")); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runCmd(t, "", "ask", "Docker cache")
+	if code != 0 || !strings.Contains(stdout, "notes/docker.md") {
+		t.Fatalf("second run: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	request := f.read(t, "request-1")
+	for _, forbidden := range []string{savedPath, "nn/old-digest.md"} {
+		if strings.Contains(request, forbidden) {
+			t.Errorf("request contains %s: %s", forbidden, request)
+		}
+	}
+	if got := f.read(t, "hooks"); got != "hook\n" {
+		t.Fatalf("hooks = %q, want exactly one run", got)
+	}
+}
+
+func TestAskSaveSkippedWhenInsufficient(t *testing.T) {
+	t.Run("partial", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(f.cfg))
+		f.write(t, "answer", `{"action":"insufficient","query":"","paragraphs":[{"text":"Use docker builder prune.","source_ids":["S1"]}],"missing":"No date was recorded."}`)
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 1 || !strings.Contains(stdout, "No date was recorded.") || stderr != "nn: ask: answer not saved: not enough evidence\n" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		assertNoAskSave(t, f)
+	})
+	t.Run("local", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(f.cfg)+"\n[ai.context]\nsearch_rounds=0\n")
+		asker := &scriptedAsker{interactive: true, answers: []string{"once"}}
+		askConsentAsker = func(context.Context) ai.Asker { return asker }
+		stdout, stderr, code := runCmd(t, "", "ask", "zzunknownzz", "--save")
+		if code != 1 || stdout == "" || stderr != "nn: ask: answer not saved: not enough evidence\n" || len(asker.questions) != 0 {
+			t.Fatalf("code=%d stdout=%q stderr=%q questions=%v", code, stdout, stderr, asker.questions)
+		}
+		if _, err := os.Stat(filepath.Join(f.dir, "calls")); !os.IsNotExist(err) {
+			t.Fatal("model ran for local insufficiency")
+		}
+		assertNoAskSave(t, f)
+	})
+}
+
+func TestAskSaveNothingOnErrors(t *testing.T) {
+	t.Run("consent never", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(strings.Replace(f.cfg, `task-choice="always"`, `task-choice="never"`, 1)))
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "never") {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(f.dir, "calls")); !os.IsNotExist(err) {
+			t.Fatal("model ran without consent")
+		}
+		assertNoAskSave(t, f)
+	})
+	t.Run("consent ask without terminal", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(strings.Replace(f.cfg, `task-choice="always"`, `task-choice="ask"`, 1)))
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "AI needs consent") {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(f.dir, "calls")); !os.IsNotExist(err) {
+			t.Fatal("model ran without consent")
+		}
+		assertNoAskSave(t, f)
+	})
+	t.Run("unknown source", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(f.cfg))
+		f.write(t, "answer", strings.Replace(askTestAnswer, "S1", "S999", 1))
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 2 || stdout != "" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		assertNoAskSave(t, f)
+	})
+	t.Run("plaintext", func(t *testing.T) {
+		f := newAskFixture(t)
+		writeConfig(t, withAskSaveHook(f.cfg))
+		f.write(t, "answer", "Unsupported plaintext answer.")
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 2 || stdout != "" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		assertNoAskSave(t, f)
+	})
+	t.Run("timeout", func(t *testing.T) {
+		f := newAskFixture(t)
+		f.write(t, "wait", "yes")
+		writeConfig(t, withAskSaveHook(strings.Replace(f.cfg, "[ai.profiles.task-choice]\n", "[ai.profiles.task-choice]\ntimeout=\"50ms\"\n", 1)))
+		stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+		if code != 2 || stdout != "" || stderr == "" {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		}
+		assertNoAskSave(t, f)
+	})
+}
+
+func TestAskSaveMissingVaultFailsBeforeModel(t *testing.T) {
+	f := newAskFixture(t)
+	t.Setenv("NN_ROOT", filepath.Join(t.TempDir(), "missing"))
+	stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "vault root") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "calls")); !os.IsNotExist(err) {
+		t.Fatal("model ran despite a missing vault root")
+	}
+}
+
+func TestAskSaveFailureKeepsStdout(t *testing.T) {
+	f := newAskFixture(t)
+	writeConfig(t, withAskSaveHook(f.cfg))
+	// Block the inbox directory with a plain file, so EnsureDir fails to create it.
+	if err := os.WriteFile(filepath.Join(f.root, "nn"), []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runCmd(t, "", "ask", "Docker cache", "--save")
+	if code != 2 || !strings.Contains(stdout, "Use docker builder prune.") || !strings.Contains(stderr, "nn: ask: save answer:") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "hooks")); !os.IsNotExist(err) {
+		t.Fatal("hook ran despite a save failure")
+	}
+}
+
+// askCancelOnWrite cancels ctx the first time stdout is written, so a save
+// attempted afterwards observes an already-cancelled context.
+type askCancelOnWrite struct {
+	cancel context.CancelFunc
+	buf    bytes.Buffer
+}
+
+func (w *askCancelOnWrite) Write(p []byte) (int, error) {
+	w.cancel()
+	return w.buf.Write(p)
+}
+
+func TestAskSaveCancelledAfterStdout(t *testing.T) {
+	f := newAskFixture(t)
+	writeConfig(t, withAskSaveHook(f.cfg))
+	ctx, cancel := context.WithCancel(context.Background())
+	stdout := &askCancelOnWrite{cancel: cancel}
+	var stderr bytes.Buffer
+	code := runText(ctx, []string{"ask", "Docker cache", "--save"}, strings.NewReader(""), stdout, &stderr)
+	if code != 130 || !strings.Contains(stdout.buf.String(), "Use docker builder prune.") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.buf.String(), stderr.String())
+	}
+	if stderr.String() != "nn: ask: cancelled\n" {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	assertNoAskSave(t, f)
+}
+
+func TestParseAskArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want askOptions
+		err  string
+	}{
+		{"save", []string{"--save"}, askOptions{ai: ai.Overrides{AI: true}, save: true}, ""},
+		{"ai then save", []string{"--ai", "--save"}, askOptions{ai: ai.Overrides{AI: true}, save: true}, ""},
+		{"all set", []string{"--save", "--ai=flag-choice", "--model", "m", "--effort=high"},
+			askOptions{ai: ai.Overrides{AI: true, Profile: "flag-choice", Model: "m", Effort: "high"}, save: true}, ""},
+		{"model eats save", []string{"--model", "--save"}, askOptions{ai: ai.Overrides{AI: true, Model: "--save"}}, ""},
+		{"save with value", []string{"--save=yes"}, askOptions{}, `unknown option "--save=yes"`},
+		{"allow-secret", []string{"--allow-secret"}, askOptions{}, `unknown option "--allow-secret"`},
+		{"stray word", []string{"--save", "Docker"}, askOptions{},
+			`"Docker" is not an option; the question goes before options: nn ask QUESTION... [--save]`},
+		{"unknown option wins", []string{"--ai-mode", "background"}, askOptions{}, `unknown option "--ai-mode"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseAskArgs(tc.args)
+			if tc.err != "" {
+				if err == nil || err.Error() != tc.err {
+					t.Fatalf("err = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAskSaveAfterDoubleDashIsQuestion(t *testing.T) {
+	f := newAskFixture(t)
+	stdout, stderr, code := runCmd(t, "", "ask", "--", "-Docker cache", "--save")
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	request := f.read(t, "request-1")
+	if !strings.Contains(request, `"question":"-Docker cache --save"`) {
+		t.Fatalf("question lost: %q", request)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "nn")); !os.IsNotExist(err) {
+		t.Fatal("nn dir created although --save was part of the question")
+	}
+}
+
+func TestAskZshCompletionOffersSave(t *testing.T) {
+	block := func(t *testing.T, verb string) string {
+		t.Helper()
+		start := strings.Index(zshIntegration, "\n    "+verb+")\n")
+		if start < 0 {
+			t.Fatalf("zshIntegration has no %s) block", verb)
+		}
+		end := strings.Index(zshIntegration[start+1:], "\n      ;;\n")
+		if end < 0 {
+			t.Fatalf("%s) block has no closing \";;\"", verb)
+		}
+		return zshIntegration[start : start+1+end]
+	}
+	if got := block(t, "ask"); !strings.Contains(got, "'--save[save the answer as a note]'") {
+		t.Fatalf("ask) completion missing --save: %s", got)
+	}
+	if got := block(t, "ai"); strings.Contains(got, "--save") {
+		t.Fatalf("ai) completion unexpectedly offers --save: %s", got)
 	}
 }

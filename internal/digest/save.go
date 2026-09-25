@@ -1,7 +1,6 @@
 package digest
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -13,14 +12,12 @@ import (
 	"github.com/lamovs/nn/internal/vault"
 )
 
-var errUnsafePath = errors.New("path would break the note's markup")
-
 // Note writes a source as text when it cannot be linked safely.
 func (d *Digest) Note(g *links.Graph, notePaths []string, inbox string, today time.Time) vault.NewNote {
 	s := d.session
-	esc := func(text string) string { return neutral(ask.Literal(text)) }
+	esc := ask.NoteLiteral
 	var body strings.Builder
-	d.writeHead(&body, esc)
+	d.writeHead(&body, esc, ask.NoteLine)
 	body.WriteString("## Sources\n\n")
 	from := path.Join(inbox, "digest.md")
 	for i, src := range s.sources {
@@ -28,20 +25,13 @@ func (d *Digest) Note(g *links.Graph, notePaths []string, inbox string, today ti
 		if strings.TrimSpace(title) == "" {
 			title = src.Path
 		}
-		// Unneutralized, so a path with "%" or "::" is not linked.
-		link, err := "", errUnsafePath
-		if !strings.Contains(src.Path, "%") && !strings.Contains(src.Path, "::") {
-			link, err = links.QualifiedLink(g, notePaths, from, src.Path)
-		}
-		if err != nil {
-			link = esc(src.Path)
-		}
+		link, ok := ask.NoteLink(g, notePaths, from, src.Path)
 		fmt.Fprintf(&body, "%d. %s %s", i+1, link, esc(title))
 		if extra := annotations(src); len(extra) > 0 {
 			fmt.Fprintf(&body, " (%s)", strings.Join(extra, ", "))
 		}
-		if err != nil {
-			body.WriteString(" (no link: ambiguous or unsafe path)")
+		if !ok {
+			body.WriteString(" " + ask.NoLink)
 		}
 		body.WriteString("\n")
 	}
@@ -60,23 +50,4 @@ func noteTitle(today time.Time, topic string) string {
 		title += " " + topic
 	}
 	return strings.TrimRight(prefix(title, 160), "# `")
-}
-
-// neutral keeps Obsidian from reading text as a Dataview field.
-func neutral(text string) string {
-	var out strings.Builder
-	out.Grow(len(text))
-	prev := rune(0)
-	for _, r := range text {
-		switch {
-		case r == '%':
-			out.WriteString("&#37;")
-		case r == ':' && prev == ':':
-			out.WriteString(`\:`)
-		default:
-			out.WriteRune(r)
-		}
-		prev = r
-	}
-	return out.String()
 }

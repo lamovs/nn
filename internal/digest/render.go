@@ -64,7 +64,7 @@ func (s *Session) validate(reply *ai.DigestReply) ([]point, error) {
 func (d *Digest) Text() string {
 	s := d.session
 	var out strings.Builder
-	d.writeHead(&out, ask.Literal)
+	d.writeHead(&out, ask.Literal, ask.Literal)
 	out.WriteString("Sources:\n")
 	for i, src := range s.sources {
 		title := src.Title
@@ -76,8 +76,8 @@ func (d *Digest) Text() string {
 	return out.String()
 }
 
-// writeHead: esc renders every model or note string.
-func (d *Digest) writeHead(out *strings.Builder, esc func(string) string) {
+// writeHead: esc renders every model or note string; point renders points.
+func (d *Digest) writeHead(out *strings.Builder, esc, point func(string) string) {
 	s := d.session
 	r := s.report
 	fmt.Fprintf(out, "Digest of %s%s; selection: %s\n", count(len(s.sources), "note"), s.dated(), esc(s.sel.describe()))
@@ -98,7 +98,7 @@ func (d *Digest) writeHead(out *strings.Builder, esc func(string) string) {
 	out.WriteString("\n")
 	for _, p := range d.points {
 		out.WriteString("- ")
-		out.WriteString(esc(p.text))
+		out.WriteString(point(p.text))
 		for _, ref := range p.refs {
 			fmt.Fprintf(out, " [%d]", ref)
 		}

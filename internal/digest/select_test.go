@@ -203,6 +203,26 @@ func TestPriorityAndIDs(t *testing.T) {
 	}
 }
 
+func TestSelectionSkipsSavedSummaries(t *testing.T) {
+	v := writeVault(t, map[string]string{
+		"notes/docker.md":  md("2026-09-18", "", "Docker note."),
+		"notes/url.md":     "---\ndate: 2026-09-18\nvia: url\n---\nDocker link.\n",
+		"nn/answer.md":     "---\ndate: 2026-09-19\nvia: ask\n---\nDocker answer.\n",
+		"nn/answer2.md":    "---\ndate: 2026-09-19\nvia: \" Ask \"\n---\nDocker answer.\n",
+		"nn/old-digest.md": "---\ndate: 2026-09-20\nvia: digest\n---\nDocker digest.\n",
+	})
+	docs := load(t, v)
+	opts := options()
+	s := mustPrepare(t, v, docs, Selection{Topic: "docker"}, opts)
+	if got := sourcePaths(s); !slices.Equal(got, []string{"notes/docker.md", "notes/url.md"}) || s.Report().Matched != 2 {
+		t.Fatalf("topic selection: %v, matched=%d", got, s.Report().Matched)
+	}
+	s = mustPrepare(t, v, docs, Selection{Paths: []string{"nn/answer.md", "nn/old-digest.md"}}, opts)
+	if got := sourcePaths(s); !slices.Equal(got, []string{"nn/answer.md", "nn/old-digest.md"}) {
+		t.Fatalf("listed selection: %v", got)
+	}
+}
+
 func TestSelectionText(t *testing.T) {
 	cases := []struct {
 		sel  Selection

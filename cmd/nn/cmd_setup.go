@@ -286,7 +286,14 @@ _nn() {
         '--model[override model]:model:' \
         '--effort[override reasoning effort]:effort:(low medium high max)'
       ;;
-    ask|ai)
+    ask)
+      _arguments \
+        '--ai[select an AI profile]' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)' \
+        '--save[save the answer as a note]'
+      ;;
+    ai)
       _arguments \
         '--ai[select an AI profile]' \
         '--model[override model]:model:' \

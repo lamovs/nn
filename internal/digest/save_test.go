@@ -30,6 +30,8 @@ func TestSavedGolden(t *testing.T) {
 		"- key:\\: v - \\[ \\] x a:\\:\\:b x:\\:\\:\\:y [1]\n" +
 		"- &#37;&#37; hidden 100&#37;&#37; \\\\\\[x\\\\\\] &amp;lt; ==x== [1] [2] [3]\n" +
 		"- \\]8;;http\\://eoscrtl sep [2]\n" +
+		"- \\~~~ x [1]\n" +
+		"- \\$$ y [3]\n" +
 		"\n" +
 		"## Sources\n" +
 		"\n" +
@@ -140,23 +142,5 @@ func TestNoteTitle(t *testing.T) {
 	long := noteTitle(today, strings.Repeat("\xd0\xb6", 300))
 	if utf8.RuneCountInString(long) != 160 || !utf8.ValidString(long) {
 		t.Fatalf("long title: %d runes", utf8.RuneCountInString(long))
-	}
-}
-
-func TestNeutral(t *testing.T) {
-	for in, want := range map[string]string{
-		"key:: v":   "key:\\: v",
-		"a:::b":     "a:\\:\\:b",
-		"x::::y":    "x:\\:\\:\\:y",
-		"a:b":       "a:b",
-		"%% hidden": "&#37;&#37; hidden",
-		"100%":      "100&#37;",
-		"a\\://b":   "a\\://b",
-		":":         ":",
-	} {
-		got := neutral(in)
-		if got != want || strings.Contains(got, "::") || strings.Contains(got, "%%") {
-			t.Errorf("neutral(%q) = %q, want %q", in, got, want)
-		}
 	}
 }

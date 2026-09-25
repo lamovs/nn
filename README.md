@@ -133,8 +133,9 @@ A draft left empty writes nothing and exits 0.
 A new note gets frontmatter `tags`, `date`, `aliases` (only for a
 human-readable title), `time`, `where` (the current directory, `~`-shortened),
 `repo` (the name of the enclosing git repository) and `via` (`text`, `editor`,
-`stdin`, `clip`, `shot` or `url`). The filename is a transliterated kebab-case
-slug of the title, or of the image's first tag or `shot` plus a timestamp. A
+`stdin`, `clip`, `shot`, `url`, `digest` or `ask`). The filename is a
+transliterated kebab-case slug of the title, or of the image's first tag or
+`shot` plus a timestamp. A
 collision appends `-2`, `-3` and so on. Titles that differ only in Unicode
 normalization (NFC vs NFD) count as a collision.
 
@@ -238,6 +239,7 @@ in the meantime.
 ```sh
 nn ask "How did I clear the Docker build cache?"
 nn ask "What did I learn about backups?" --ai=codex --effort high
+nn ask "What did I decide about backups?" --save
 ```
 
 `nn ask QUESTION...` searches locally, sends selected excerpts to the model and
@@ -248,14 +250,15 @@ the notes it actually sent; a source ID it did not send is an error.
 The search is the regular lexical one (no vector index, semantic retrieval,
 graph expansion or Obsidian MCP) over titles, aliases, tags, body text and
 cached OCR text of images in notes. Standalone images are not sources, and
-`nn ask` runs no OCR.
+`nn ask` runs no OCR. Notes saved by `nn ask --save` or `nn digest --save`
+(`via: ask`, `via: digest`) are never sources.
 
 `ai.context.notes` (default 8) and `ai.context.chars` (default 12000) cap the
 sources and excerpt text for the whole question, metadata included. With the
 default `ai.context.search_rounds = 1`, the first search uses at most half of
 the budget, and the model may ask for one more search; with `0` the first
 search may use all of it. The profile timeout covers all model calls and
-searches together.
+searches together; saving the answer with `--save` afterwards is not covered.
 
 `nn ask` always waits, even with `ai.mode = "background"`. It uses
 `ai.tasks.ask.profile` and `ai.tasks.ask.prompt_file`; `--ai[=PROFILE]`,
@@ -265,9 +268,24 @@ Without consent the command fails with the usual setup hint.
 Without enough evidence, the answer says what is missing and may give partial
 findings with sources. Exit codes: 0 for an answer; 1 for insufficient data
 (without a model call when nothing matches and search rounds are `0`); 2 for
-usage, consent, engine or protocol errors, with nothing on stdout; 130 when
-cancelled. `nn ask` writes nothing: no notes, links, open history, save hooks
-or background jobs.
+usage, consent, engine or protocol errors, with nothing on stdout, or for a
+failed `--save`, which keeps the answer on stdout; 130 when cancelled.
+Without `--save`, `nn ask` writes nothing: no notes, links, open history,
+save hooks or background jobs.
+
+`--save`, placed after the question like the other options, writes the
+answer as one new inbox note after printing it and prints the note's path to
+stderr. The note is titled with the question (cut to 160 characters) and
+holds the answer with the same source numbers, then a `Sources` section with
+verified wikilinks to the cited notes. A path that cannot be linked safely
+(unsafe or case-ambiguous characters, `%` or `::`) is written as escaped text
+with "(no link: ambiguous or unsafe path)". The note has `via: ask` and no
+tags, so later `nn ask` runs never use it as a source and `nn digest` leaves
+it out unless it is listed with `-`. There is no second model call and no
+similar-note prompt; the post-save hook runs once. An answer without enough
+evidence (exit 1) is not saved, and stderr says so. If saving fails, the
+answer stays on stdout and the exit code is 2; cancelling during the save
+exits 130 with the answer still on stdout.
 
 ## Digest notes
 
@@ -319,8 +337,9 @@ escaped, not as links. The built-in `digest` verb shadows an external
 note's path to stderr. Its `Sources` section has verified wikilinks. A path
 that cannot be linked safely (unsafe or case-ambiguous characters, `%` or `::`)
 is written as escaped text with "(no link: ambiguous or unsafe path)". A saved
-digest has `via: digest` and is left out of later digests unless listed with
-`-`.
+digest has `via: digest`. Saved digests and answers saved by `nn ask --save`
+(`via: ask`) are left out of later digests unless listed with `-`, and
+`nn ask` never uses either as a source.
 
 AI is implicit and the command always waits; there is no `--no-ai`.
 `--ai[=PROFILE]`, `--model` and `--effort` work as in `nn ask`. Consent is
@@ -889,7 +908,7 @@ each task sends:
 
 - `shot`: the screenshot, its OCR text and existing vault tags
 - `title`: new note text or OCR, an optional source image and existing vault tag names
-- `ask`: your question and excerpts of the notes nn finds for it
+- `ask`: your question and the paths, titles, tags and excerpts of the notes nn finds for it
 - `filter`: your instruction and the text piped to nn ai
 - `last`: the previous command you provide and its optional output
 - `triage`: excerpts and metadata of selected inbox notes and related notes

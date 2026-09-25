@@ -354,6 +354,38 @@ func TestTransportLimitAndMetadataAccounting(t *testing.T) {
 	}
 }
 
+func TestPrepareSkipsSavedSummaries(t *testing.T) {
+	files := map[string]string{
+		"notes/x.md": "alpha\n",
+		"notes/u.md": "---\nvia: url\n---\nalpha\n",
+		"nn/s1.md":   "---\nvia: ask\n---\nalpha alpha\n",
+		"nn/s2.md":   "---\nvia: \" ASK \"\n---\nalpha\n",
+		"nn/d.md":    "---\nvia: digest\n---\nalpha\n",
+		"nn/d2.md":   "---\nvia: Digest\n---\nalpha\n",
+	}
+	s := prepare(t, files, "alpha", 1)
+	calls := 0
+	text, err := s.Run(context.Background(), ai.Approval{}, call(), "prompt", func(_ context.Context, _ ai.Approval, req ai.Request) (ai.Result, error) {
+		calls++
+		for _, forbidden := range []string{"nn/s1.md", "nn/s2.md", "nn/d.md", "nn/d2.md"} {
+			if strings.Contains(req.Text, forbidden) {
+				t.Fatalf("call %d sent %s: %s", calls, forbidden, req.Text)
+			}
+		}
+		if !strings.Contains(req.Text, "notes/x.md") || !strings.Contains(req.Text, "notes/u.md") {
+			t.Fatalf("call %d omitted notes/x.md or notes/u.md: %s", calls, req.Text)
+		}
+		if calls == 1 {
+			return ai.Result{Ask: &ai.AskReply{Action: "search", Query: "alpha beta"}}, nil
+		}
+		got := decodeRequest(t, req)
+		return answer(got.Sources[0].ID), nil
+	})
+	if err != nil || calls != 2 || !strings.Contains(text, "[1]") {
+		t.Fatalf("text=%q calls=%d err=%v", text, calls, err)
+	}
+}
+
 func TestDeterministicPathTieAndLayoutFallback(t *testing.T) {
 	s := &Session{opts: Options{NoLayoutFallback: true}, now: time.Unix(100, 0), docs: []*search.Doc{
 		{Path: "z.md", Title: "alpha"}, {Path: "a.md", Title: "alpha"},

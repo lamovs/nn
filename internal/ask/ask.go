@@ -58,6 +58,7 @@ type Session struct {
 	chars    int
 	now      time.Time
 	started  bool
+	bound    *bound
 }
 
 // Prepare searches locally before asking permission to send any data.
@@ -78,7 +79,7 @@ func Prepare(ctx context.Context, v *vault.Vault, opts Options, question string)
 	}
 	s := &Session{vault: v, opts: opts, question: question, paths: map[string]bool{}, sources: []source{}, now: time.Now()}
 	for _, doc := range docs {
-		if strings.HasSuffix(strings.ToLower(doc.Path), ".md") {
+		if strings.HasSuffix(strings.ToLower(doc.Path), ".md") && !SummaryNote(doc.Via) {
 			s.docs = append(s.docs, doc)
 		}
 	}
@@ -101,7 +102,7 @@ func (s *Session) LocalAnswer() (string, bool) {
 
 // ContextDescription covers the entire invocation, follow-ups included.
 func (s *Session) ContextDescription() string {
-	return fmt.Sprintf("the question and excerpts from up to %d notes (%d characters total), including up to %d additional local searches", s.opts.Limits.Notes, s.opts.Limits.Chars, s.opts.Limits.SearchRounds)
+	return fmt.Sprintf("the question and the paths, titles, tags and excerpts of up to %d notes (%d characters total), including up to %d additional local searches", s.opts.Limits.Notes, s.opts.Limits.Chars, s.opts.Limits.SearchRounds)
 }
 
 // Run never writes output itself; one timeout covers every model call.

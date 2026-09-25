@@ -172,7 +172,7 @@ func TakesImage(task string) bool { return task == "shot" }
 var taskSends = map[string]string{
 	"shot":   "the screenshot, its OCR text and existing vault tags",
 	"title":  "new note text or OCR, an optional source image and existing vault tag names",
-	"ask":    "your question and excerpts of the notes nn finds for it",
+	"ask":    "your question and the paths, titles, tags and excerpts of the notes nn finds for it",
 	"filter": "your instruction and the text piped to nn ai",
 	"last":   "the previous command you provide and its optional output",
 	"triage": "excerpts and metadata of selected inbox notes and related notes",

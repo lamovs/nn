@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/lamovs/nn/internal/ask"
 	"github.com/lamovs/nn/internal/search"
 )
 
@@ -49,8 +50,8 @@ func (s *Session) selectNotes(ctx context.Context, docs []*search.Doc) ([]candid
 		if !sel.Until.IsZero() && (c.date.IsZero() || !c.date.Before(sel.Until)) {
 			continue
 		}
-		// Skip digest notes so digests do not summarize summaries.
-		if sel.Paths == nil && strings.EqualFold(strings.TrimSpace(c.doc.Via), "digest") {
+		// Skip saved digests and answers so digests do not summarize summaries.
+		if sel.Paths == nil && ask.SummaryNote(c.doc.Via) {
 			continue
 		}
 		s.report.Layout = s.report.Layout || result.Layout

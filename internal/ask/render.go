@@ -54,21 +54,36 @@ func validateReply(reply *ai.AskReply) error {
 	return nil
 }
 
-func (s *Session) render(reply *ai.AskReply) (string, error) {
+// bound is a validated reply's paragraphs and sources, bound to the sources
+// that were actually sent and numbered by first citation.
+type bound struct {
+	paragraphs []boundParagraph
+	cited      []source
+}
+
+// boundParagraph is one paragraph with its source numbers, in stdout order.
+type boundParagraph struct {
+	text string
+	refs []int
+}
+
+// bind maps every cited source ID to a sent source and numbers sources by
+// first citation; an unknown or unsent ID is an error.
+func (s *Session) bind(reply *ai.AskReply) (*bound, error) {
 	byID := map[string]source{}
 	for _, src := range s.sources {
 		byID[src.ID] = src
 	}
 	numbers := map[string]int{}
 	var cited []source
-	var out strings.Builder
+	var paragraphs []boundParagraph
 	for _, paragraph := range reply.Paragraphs {
 		var refs []int
 		seen := map[string]bool{}
 		for _, id := range paragraph.SourceIDs {
 			src, exists := byID[id]
 			if !exists {
-				return "", errors.New("ask: model cited an unknown or unsent source")
+				return nil, errors.New("ask: model cited an unknown or unsent source")
 			}
 			if seen[src.Path] {
 				continue
@@ -80,8 +95,23 @@ func (s *Session) render(reply *ai.AskReply) (string, error) {
 			}
 			refs = append(refs, numbers[src.Path])
 		}
-		out.WriteString(literal(paragraph.Text))
-		for _, number := range refs {
+		paragraphs = append(paragraphs, boundParagraph{text: paragraph.Text, refs: refs})
+	}
+	return &bound{paragraphs: paragraphs, cited: cited}, nil
+}
+
+func (s *Session) render(reply *ai.AskReply) (string, error) {
+	b, err := s.bind(reply)
+	if err != nil {
+		return "", err
+	}
+	if reply.Action == "answer" {
+		s.bound = b
+	}
+	var out strings.Builder
+	for _, p := range b.paragraphs {
+		out.WriteString(literal(p.text))
+		for _, number := range p.refs {
 			fmt.Fprintf(&out, " [%d]", number)
 		}
 		out.WriteString("\n\n")
@@ -91,15 +121,15 @@ func (s *Session) render(reply *ai.AskReply) (string, error) {
 		out.WriteString(literal(reply.Missing))
 		out.WriteString("\n\n")
 	}
-	if len(cited) > 0 {
+	if len(b.cited) > 0 {
 		out.WriteString("Sources:\n")
 	}
-	for _, src := range cited {
+	for i, src := range b.cited {
 		title := src.Title
 		if strings.TrimSpace(title) == "" {
 			title = src.Path
 		}
-		fmt.Fprintf(&out, "[%d] [%s](%s) (%s)\n", numbers[src.Path], literal(title), platform.ObsidianURI(s.vault.Abs(src.Path)), literal(src.Path))
+		fmt.Fprintf(&out, "[%d] [%s](%s) (%s)\n", i+1, literal(title), platform.ObsidianURI(s.vault.Abs(src.Path)), literal(src.Path))
 	}
 	text := strings.TrimSpace(out.String()) + "\n"
 	if reply.Action == "insufficient" {
@@ -108,7 +138,8 @@ func (s *Session) render(reply *ai.AskReply) (string, error) {
 	return text, nil
 }
 
-// literal: only the renderer creates links; model text is untrusted prose.
+// literal: model text is untrusted prose; links come only from nn itself
+// (render and Session.Note).
 func literal(text string) string {
 	text = strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {

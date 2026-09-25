@@ -34,7 +34,7 @@ func init() {
 			Sections: []cli.HelpSection{
 				{Title: "Selection", Items: []string{
 					"Give TOPIC words (nn s AND semantics, at most 200 characters), or -t TAG (repeatable, at most 16), --since, --until, --inbox, --here, or a single \"-\" to read note paths from stdin exactly as nn s/ls/links/backlinks --paths print them. At least one is required, and filters combine with AND.",
-					"Words may come before or after options, as in nn s. A lone \"-\" cannot be combined with other words, and only reads note paths off a pipe or file, never a terminal; put it before -- to read stdin, since after -- it is topic text, refused when a list is piped in. Notes saved by an earlier digest are left out of any selection unless listed with -.",
+					"Words may come before or after options, as in nn s. A lone \"-\" cannot be combined with other words, and only reads note paths off a pipe or file, never a terminal; put it before -- to read stdin, since after -- it is topic text, refused when a list is piped in. Notes saved by an earlier digest or by nn ask --save are left out of any selection unless listed with -.",
 				}},
 				{Title: "Budget and save", Items: []string{
 					"--notes N (1..64) and --chars N (1000..32000) override ai.context.notes/chars for this call; config values above the caps are clamped. Notes that look like they carry a credential are skipped and disclosed; --allow-secret includes them, consent permitting.",
