@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ]; then
+    printf 'usage: %s OUTPUT_DIRECTORY\n' "$0" >&2
+    exit 2
+fi
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(dirname -- "$script_dir")
+mkdir -p "$1"
+output_dir=$(CDPATH='' cd -- "$1" && pwd)
+stage=$(mktemp -d "${TMPDIR:-/tmp}/nn-vision-build.XXXXXX")
+trap 'rm -r "$stage"' EXIT
+trap 'exit 1' HUP INT TERM
+for arch in arm64 x86_64; do
+    /usr/bin/swiftc -O -parse-as-library -target "$arch-apple-macosx13.0" \
+        -framework AppKit -framework Vision \
+        -o "$stage/nn-vision-$arch" "$repo_dir/integrations/macos/NNVision.swift"
+done
+/usr/bin/lipo -create "$stage/nn-vision-arm64" "$stage/nn-vision-x86_64" \
+    -output "$stage/nn-vision"
+/usr/bin/codesign --force --sign - --identifier com.lamovs.nn.vision "$stage/nn-vision"
+/usr/bin/codesign --verify --strict "$stage/nn-vision"
+mv -f "$stage/nn-vision" "$output_dir/nn-vision"

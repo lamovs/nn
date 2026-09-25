@@ -1,0 +1,52 @@
+version: 2
+project_name: nn
+dist: dist/release
+
+builds:
+  - id: nn
+    main: ./cmd/nn
+    binary: nn
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: nn
+    ids: [nn]
+    formats: [tar.gz]
+    name_template: 'nn_{{.Version}}_{{.Os}}_{{.Arch}}'
+    builds_info:
+      owner: root
+      group: root
+      mtime: '{{.CommitDate}}'
+    files:
+      - src: README.md
+        dst: .
+        strip_parent: true
+        info: {owner: root, group: root, mode: 0644}
+      - src: '{{ if eq .Os "darwin" }}dist/helper/nn-vision{{ else }}no-macos-helper*{{ end }}'
+        dst: share/nn
+        strip_parent: true
+        info: {owner: root, group: root, mode: 0755}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: lamovs
+    name: nn
+  draft: true

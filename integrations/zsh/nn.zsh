@@ -1,0 +1,197 @@
+# nn zsh integration. Add to ~/.zshrc, or source directly:
+#   source /path/to/nn.zsh
+
+# Capture the last shell command as a code note, or with --ai explain it via nn last.
+nn-last() {
+  local cmd arg event rest listing boundary oldest candidate
+  local use_ai=0
+  if (( $# == 0 )); then
+    cmd=$(fc -ln -1)
+    nn add "$cmd" --code=sh
+    return $?
+  fi
+  for arg in "$@"; do
+    if [[ $arg == --ai || $arg == --ai=* ]]; then
+      use_ai=1
+    fi
+  done
+  if (( ! use_ai )); then
+    print -u2 -r -- 'nn-last: options require --ai or --ai=PROFILE'
+    return 2
+  fi
+  builtin setopt LOCAL_OPTIONS || return 2
+  builtin unsetopt ALL_EXPORT || return 2
+  builtin local +x cmd arg event rest listing boundary oldest candidate use_ai || return 2
+  if ! builtin zmodload zsh/parameter; then
+    print -u2 -r -- 'nn-last: raw shell history is unavailable'
+    return 2
+  fi
+  # fc displays escaped text; only use numeric event metadata from its listing.
+  listing=$(builtin fc -l -1 -1 2>/dev/null) || {
+    print -u2 -r -- 'nn-last: no previous local command is available'
+    return 2
+  }
+  IFS=$' \t' builtin read -r boundary rest <<< "$listing"
+  if [[ $boundary != <1-> ]]; then
+    print -u2 -r -- 'nn-last: no previous local command is available'
+    return 2
+  fi
+  oldest=$boundary
+  for candidate in "${(@k)history}"; do
+    if [[ $candidate == <1-> ]] && (( candidate < oldest )); then
+      oldest=$candidate
+    fi
+  done
+  listing=$(builtin fc -l -I -L "$oldest" "$boundary" 2>/dev/null) || {
+    print -u2 -r -- 'nn-last: no previous local command is available'
+    return 2
+  }
+  event=0
+  while IFS=$' \t' builtin read -r candidate rest; do
+    if [[ $candidate == <1-> ]] && (( candidate <= boundary && candidate > event )); then
+      event=$candidate
+    fi
+  done <<< "$listing"
+  if [[ $event == 0 || ${+history[$event]} != 1 ]]; then
+    print -u2 -r -- 'nn-last: no previous local command is available'
+    return 2
+  fi
+  cmd="${history[$event]}"
+  builtin print -rn -- "$cmd" | nn last "$@"
+}
+
+# Insert the result of "nn snip" at the cursor, for a keybinding.
+nn-snip-widget() {
+  local snippet
+  snippet=$(nn snip)
+  if [[ -n $snippet ]]; then
+    LBUFFER+=$snippet
+  fi
+  zle reset-prompt
+}
+zle -N nn-snip-widget
+
+# Bind nn-snip-widget to a key of your choice, for example:
+# bindkey '^X^N' nn-snip-widget
+
+# Tab completion: commands, tags and notes.
+_nn() {
+  local -a commands
+  commands=(
+    add:'capture a new note' a:'alias for add'
+    shot:'capture a screen region' edit:'open a note' e:'alias for edit'
+    url:'save a web link with an AI summary'
+    snip:'print a code snippet' ai:'transform piped text'
+    last:'explain a supplied shell command'
+    s:'search notes' ask:'answer questions from notes' digest:'summarize selected notes'
+    triage:'review inbox additions'
+    ls:'list notes' show:'print a note'
+    cat:'print a note body' code:'print code blocks' open:'open in Obsidian'
+    links:'outgoing links' backlinks:'incoming links' graph:'link graph'
+    tags:'list tags' stats:'usage stats'
+    ocr:'recognize text in images'
+    doctor:'check setup' setup:'shell integration, install and AI consent'
+    config:'show or change configuration' help:'command help'
+    version:'print the version'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'nn command' commands
+    return
+  fi
+
+  case ${words[2]} in
+    add|a)
+      _arguments \
+        '--ai[suggest title and keyword tags]' '--no-ai[skip metadata]' \
+        '--ai-mode[metadata delivery]:mode:(background wait auto)' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)' \
+        '--title[note title]:title:' '--to[append to note]:note:' \
+        '--clip[read clipboard image or text]' '--preview[preview only]' \
+        '--ocr[recognize text]' '--no-ocr[skip text recognition]' \
+        '--new[create a new note]' '--allow-secret[allow discovered secrets]' \
+        '--code[wrap code]' '-e[edit draft]' '-T[template]:template:' \
+        '*-t[note tag]:tag:'
+      ;;
+    shot)
+      _arguments \
+        '--ai[analyze screenshot with the default profile]' \
+        '--no-ai[skip screenshot analysis]' \
+        '--ai-mode[analysis delivery]:mode:(background wait auto)' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)' \
+        '--title[note title]:title:' \
+        '--ocr[recognize text]' '--no-ocr[skip text recognition]' \
+        '--copy-text[copy recognized text]' '--no-copy-text[do not copy text]' \
+        '*-t[note tag]:tag:'
+      ;;
+    url)
+      _arguments \
+        '--title[note title]:title:' \
+        '--ai[select an AI profile]' '--no-ai[save the link without a summary]' \
+        '--ai-mode[summary delivery]:mode:(background wait auto)' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)' \
+        '--allow-secret[allow sending discovered secrets]' \
+        '--allow-private[allow fetching private network addresses]' \
+        '*-t[note tag]:tag:'
+      ;;
+    last)
+      _arguments \
+        '--ai[select an AI profile]' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)' \
+        '--output[include output from a text file]:file:_files' \
+        '--save[save the analysis as a note]' \
+        '--allow-secret[allow sending discovered credentials]'
+      ;;
+    triage)
+      _arguments \
+        '--apply[select additions and confirm their exact diff]' \
+        '--ai[select an AI profile]' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)'
+      ;;
+    ask|ai)
+      _arguments \
+        '--ai[select an AI profile]' \
+        '--model[override model]:model:' \
+        '--effort[override reasoning effort]:effort:(low medium high max)'
+      ;;
+    digest)
+      if [[ ${words[CURRENT]} == -t || ${words[CURRENT-1]} == -t ]]; then
+        local -a tags
+        tags=(${(f)"$(nn tags --names 2>/dev/null)"})
+        _describe -t tags 'tag' tags
+      else
+        _arguments \
+          '*-t[filter by tag]:tag:' \
+          '--since[period start]:since:' \
+          '--until[period end]:until:' \
+          '--inbox[only inbox notes]' \
+          '--here[only notes captured here]' \
+          '--notes[note limit]:notes:' \
+          '--chars[character limit]:chars:' \
+          '--save[save the digest as a note]' \
+          '--allow-secret[allow sending discovered secrets]' \
+          '--ai[select an AI profile]' \
+          '--model[override model]:model:' \
+          '--effort[override reasoning effort]:effort:(low medium high max)'
+      fi
+      ;;
+    edit|e|show|cat|code|open|links|backlinks|graph)
+      local -a notes
+      notes=(${(f)"$(nn ls --paths -n all 2>/dev/null)"})
+      _describe -t notes 'note' notes
+      ;;
+    s|ls|snip)
+      if [[ ${words[CURRENT]} == -t || ${words[CURRENT-1]} == -t ]]; then
+        local -a tags
+        tags=(${(f)"$(nn tags --names 2>/dev/null)"})
+        _describe -t tags 'tag' tags
+      fi
+      ;;
+  esac
+}
+compdef _nn nn
